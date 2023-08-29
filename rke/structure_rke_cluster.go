@@ -95,6 +95,8 @@ func flattenRKECluster(d *schema.ResourceData, in *cluster.Cluster) error {
 	if _, ok := d.Get("enable_cri_dockerd").(bool); ok && in.EnableCRIDockerd != nil {
 		if in.EnableCRIDockerd == nil {
 			d.Set("enable_cri_dockerd", false)
+		} else {
+			d.Set("enable_cri_dockerd", *in.EnableCRIDockerd)
 		}
 	}
 
