@@ -1,10 +1,14 @@
 package rke
 
 import (
+	"context"
 	"fmt"
+	"sort"
 
+	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/rancher/rke/cluster"
+	"github.com/rancher/rke/metadata"
 	rancher "github.com/rancher/rke/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
@@ -89,7 +93,9 @@ func flattenRKECluster(d *schema.ResourceData, in *cluster.Cluster) error {
 	d.Set("dind", in.DinD)
 
 	if _, ok := d.Get("enable_cri_dockerd").(bool); ok && in.EnableCRIDockerd != nil {
-		d.Set("enable_cri_dockerd", *in.EnableCRIDockerd)
+		if in.EnableCRIDockerd == nil {
+			d.Set("enable_cri_dockerd", false)
+		}
 	}
 
 	if _, ok := d.Get("ignore_docker_version").(bool); ok && in.IgnoreDockerVersion != nil {
@@ -239,6 +245,27 @@ func flattenRKECluster(d *schema.ResourceData, in *cluster.Cluster) error {
 	return nil
 }
 
+func k8sVersionRequiresCri(kuberenetsVersion string) bool {
+	metadata.InitMetadata(context.Background())
+	versions := make([]*version.Version, 0, len(metadata.K8sVersionToRKESystemImages))
+	for k := range metadata.K8sVersionToRKESystemImages {
+		v, _ := version.NewVersion(k)
+		versions = append(versions, v)
+	}
+
+	sort.Sort(sort.Reverse(version.Collection(versions)))
+	kuberenetsVersion = kuberenetsVersion[1:]
+	for _, v := range versions {
+		if v.String() == kuberenetsVersion {
+			return true
+		}
+		if v.String() == "1.23.4-rancher1-1" {
+			break
+		}
+	}
+	return false
+}
+
 // Expanders
 
 func expandRKECluster(in *schema.ResourceData) (string, *rancher.RancherKubernetesEngineConfig, error) {
@@ -294,6 +321,13 @@ func expandRKECluster(in *schema.ResourceData) (string, *rancher.RancherKubernet
 
 	if v, ok := in.Get("enable_cri_dockerd").(bool); ok {
 		obj.EnableCRIDockerd = &v
+		if !v {
+			if kubernetesVersion, ok := in.Get("kubernetes_version").(string); ok {
+				if k8sVersionRequiresCri(kubernetesVersion) && !v {
+					obj.EnableCRIDockerd = nil
+				}
+			}
+		}
 	}
 
 	if v, ok := in.Get("ignore_docker_version").(bool); ok {
